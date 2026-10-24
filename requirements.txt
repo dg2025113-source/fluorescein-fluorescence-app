@@ -1,0 +1,6 @@
+streamlit>=1.36
+numpy
+pandas
+matplotlib
+Pillow
+supabase>=2.4
