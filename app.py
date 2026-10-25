@@ -6,10 +6,6 @@ import streamlit as st
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw
 
-try:
-    from supabase import create_client
-except Exception:
-    create_client = None
 
 st.set_page_config(page_title="플루오레세인 형광 분석", page_icon="🧪", layout="wide")
 st.title("🧪 플루오레세인 나트륨 형광 분석")
@@ -18,12 +14,6 @@ st.caption("평균 G 채널 밝기(0–255)는 상대적 디지털 밝기값이�
 if "local_records" not in st.session_state: st.session_state.local_records = []
 if "conc_records" not in st.session_state: st.session_state.conc_records = []
 
-def sb():
-    try:
-        if create_client and st.secrets.get("SUPABASE_URL") and st.secrets.get("SUPABASE_KEY"):
-            return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"]), st.secrets.get("SUPABASE_BUCKET","fluorescence-images")
-    except Exception: pass
-    return None
 
 def jpg_bytes(img):
     b=io.BytesIO(); img.convert("RGB").save(b,format="JPEG",quality=92); return b.getvalue()
@@ -41,14 +31,6 @@ def preview(img,m):
     out=img.convert("RGB").copy(); ImageDraw.Draw(out).rectangle((m["x1"],m["y1"],m["x2"]-1,m["y2"]-1),outline="red",width=max(2,out.width//300)); return out
 
 def save_record(rec, imgbytes):
-    cloud=sb()
-    if cloud:
-        client,bucket=cloud
-        path=f"{rec['id']}.jpg"
-        client.storage.from_(bucket).upload(path,imgbytes,file_options={"content-type":"image/jpeg","upsert":"true"})
-        payload={k:v for k,v in rec.items() if k!="image_bytes"}; payload["image_path"]=path
-        client.table("fluorescence_records").insert(payload).execute()
-        return "cloud"
     st.session_state.local_records.insert(0,{**rec,"image_bytes":imgbytes})
     return "session"
 
@@ -90,7 +72,7 @@ if page=="📷 사진 분석":
         if st.button("💾 결과 저장",type="primary"):
             try:
                 mode=save_record(rec,jpg_bytes(img))
-                st.success("클라우드에 저장했습니다." if mode=="cloud" else "현재 세션에 저장했습니다. 영구 저장은 Supabase 설정이 필요합니다.")
+                st.success("현재 세션에 저장했습니다. 필요한 기록은 CSV와 사진으로 다운로드해 보관하세요.")
             except Exception as e: st.error(f"저장 실패: {e}")
         st.info("포화 비율은 ROI에서 G 채널 값이 255인 픽셀의 비율입니다. 카메라 포화를 완벽하게 진단하는 지표는 아닙니다.")
 
@@ -138,29 +120,15 @@ elif page=="📊 실험 그래프":
 
 elif page=="🖼️ 저장 갤러리":
     st.header("저장 갤러리")
-    cloud=sb()
-    if cloud:
-        client,bucket=cloud
-        try:
-            records=client.table("fluorescence_records").select("*").order("created_at",desc=True).limit(100).execute().data or []
-            mode="cloud"
-        except Exception as e:
-            st.error(f"클라우드 기록을 읽지 못했습니다: {e}"); records=[]; mode="error"
-    else:
-        records=st.session_state.local_records; mode="session"
-        st.warning("현재 세션 저장 모드입니다. 앱 재시작 후 유지하려면 Supabase를 설정하세요.")
+    records=st.session_state.local_records
+    st.warning("임시 저장 모드입니다. 앱을 다시 열거나 세션이 초기화되면 기록이 사라질 수 있으므로 필요한 기록은 다운로드해 보관하세요.")
     if not records: st.info("저장된 결과가 없습니다. 사진 분석에서 결과 저장을 누르세요.")
     for i,rec in enumerate(records):
         with st.expander(f"{rec.get('sample_name') or rec.get('concentration') or '이름 없는 시료'} · G {rec.get('mean_g','—')} · {str(rec.get('created_at',''))[:19]}"):
             for k,label in [("experiment_type","실험 종류"),("ph","pH"),("concentration","농도"),("mean_g","평균 G 밝기"),("max_g","최대 G 밝기"),("saturation_pct","포화 비율"),("memo","메모")]:
                 st.write(f"**{label}:** {rec.get(k) or '미입력'}")
             st.write(f"**ROI:** 좌 {rec.get('roi_left_pct')}%, 우 {rec.get('roi_right_pct')}%, 위 {rec.get('roi_top_pct')}%, 아래 {rec.get('roi_bottom_pct')}%")
-            if mode=="session" and rec.get("image_bytes"): st.image(rec["image_bytes"],use_container_width=True)
-            elif mode=="cloud" and rec.get("image_path"):
-                try:
-                    url=client.storage.from_(bucket).create_signed_url(rec["image_path"],3600)
-                    st.image(url.get("signedURL") or url.get("signedUrl"),use_container_width=True)
-                except Exception: st.caption("사진 미리보기를 불러오지 못했습니다.")
+            if rec.get("image_bytes"): st.image(rec["image_bytes"],use_container_width=True)
             st.download_button("기록 JSON 다운로드",json.dumps({k:v for k,v in rec.items() if k!="image_bytes"},ensure_ascii=False,indent=2).encode("utf-8"),f"record_{i+1}.json","application/json",key=f"json{i}")
 
 else:
@@ -173,4 +141,4 @@ else:
     if st.session_state.conc_records:
         df=pd.DataFrame(st.session_state.conc_records); st.dataframe(df,use_container_width=True)
         st.download_button("농도 선정 CSV 다운로드",df.to_csv(index=False).encode("utf-8-sig"),"concentration_records.csv","text/csv")
-    st.markdown("**영구 저장:** Streamlit Cloud는 임시 세션 저장을 보장하지 않습니다. Supabase를 연결하면 저장 갤러리가 재시작 후에도 유지됩니다.")
+    st.markdown("**보관 안내:** 앱 세션이 초기화되면 임시 기록이 사라질 수 있습니다. 중요한 데이터는 위에서 CSV를 다운로드하고 사진도 별도로 보관하세요.")
