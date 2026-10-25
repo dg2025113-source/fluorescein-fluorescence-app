@@ -21,13 +21,8 @@ if "conc_records" not in st.session_state:
     st.session_state.conc_records = []
 
 
-def calc(img, left_pct, right_pct, top_pct, bottom_pct, ceiling_g=225):
-    """Calculate RGB green-channel statistics within the selected ROI.
-
-    saturation_pct: percentage of ROI pixels whose G channel is exactly 255.
-    ceiling_hit_pct: percentage of ROI pixels whose G channel is >= ceiling_g.
-    These are intentionally separate metrics.
-    """
+def calc(img, left_pct, right_pct, top_pct, bottom_pct):
+    """Calculate green-channel statistics within the selected ROI."""
     rgb = np.asarray(img.convert("RGB"))
     height, width = rgb.shape[:2]
     x1 = int(width * left_pct / 100)
@@ -42,8 +37,6 @@ def calc(img, left_pct, right_pct, top_pct, bottom_pct, ceiling_g=225):
         "mean_g": float(g.mean()),
         "max_g": int(g.max()),
         "saturation_pct": float((g == 255).mean() * 100),
-        "ceiling_hit_pct": float((g >= ceiling_g).mean() * 100),
-        "ceiling_g": int(ceiling_g),
         "x1": x1,
         "x2": x2,
         "y1": y1,
@@ -86,6 +79,7 @@ page = st.sidebar.radio("실험 메뉴", menu_items)
 
 
 def photo_panel(experiment_type, show_ph=False, show_conc=False, show_addition=False):
+    is_concentration = experiment_type == "농도 선정"
     st.subheader("사진 분석 및 기록")
     st.write("사진을 올리고 이 화면에서 분석·기록하면 됩니다. 다른 메뉴로 이동할 필요가 없습니다.")
     uploaded = st.file_uploader(
@@ -103,7 +97,7 @@ def photo_panel(experiment_type, show_ph=False, show_conc=False, show_addition=F
     memo = col2.text_input("메모", placeholder="측정 조건, 관찰 사항 등", key=f"memo_{experiment_type}")
     col3, col4 = st.columns(2)
     ph = col3.number_input("측정 pH", min_value=0.0, max_value=14.0, value=0.0, step=0.1, key=f"ph_{experiment_type}") if show_ph else None
-    conc = col4.text_input("농도", value="0.001%" if experiment_type == "농도 선정" else "", key=f"conc_{experiment_type}") if show_conc else None
+    conc = col4.text_input("농도", value="0.001%" if is_concentration else "", key=f"conc_{experiment_type}") if show_conc else None
 
     if show_addition:
         col5, col6 = st.columns(2)
@@ -123,55 +117,28 @@ def photo_panel(experiment_type, show_ph=False, show_conc=False, show_addition=F
         st.error("ROI 경계를 확인하세요: 왼쪽은 오른쪽보다 작고, 위쪽은 아래쪽보다 작아야 합니다.")
         return
 
-    # 225 is a comparison threshold based on the earlier app's displayed ceiling,
-    # not a claim that every pixel >=225 was physically saturated.
-    if experiment_type == "농도 선정":
-        st.markdown("#### 농도 선정 기준")
-        st.caption("기준은 실험 전에 정하고, 측정 결과에 맞춰 사후 변경하지 않는 것이 좋습니다.")
-        col1, col2 = st.columns(2)
-        low = col1.number_input("밝기 하한", 0.0, 254.0, 190.0, 1.0, key="conc_low")
-        high = col2.number_input("밝기 상한", 1.0, 255.0, 200.0, 1.0, key="conc_high")
-        col3, col4 = st.columns(2)
-        satmax = col3.number_input("실제 포화 픽셀 비율 상한 (%)", 0.0, 100.0, 0.0, 0.1, key="conc_satmax")
-        ceiling_g = int(col4.number_input("기존 앱 상한 비교값 G", 1, 255, 225, 1, key="conc_ceiling_g"))
-        col5, col6 = st.columns(2)
-        bg = col5.number_input("배경 평균 G 밝기 (모르면 0)", 0.0, 255.0, 0.0, 0.1, key="conc_bg")
-    else:
-        low, high, satmax, bg, ceiling_g = 190.0, 200.0, 0.0, 0.0, 225
-
-    metrics = calc(img, left, right, top, bottom, ceiling_g)
+    metrics = calc(img, left, right, top, bottom)
     marked = preview(img, metrics)
     col1, col2 = st.columns(2)
     col1.image(img, caption="원본 사진", use_container_width=True)
     col2.image(marked, caption="빨간 사각형 = 분석 영역(ROI)", use_container_width=True)
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("평균 G 밝기", f"{metrics['mean_g']:.2f}/255")
-    col2.metric("실제 최대 G 밝기", f"{metrics['max_g']}/255")
-    col3.metric("G=255 실제 포화 비율", f"{metrics['saturation_pct']:.2f}%")
-    col4.metric(f"G≥{ceiling_g} 상한 도달 비율", f"{metrics['ceiling_hit_pct']:.2f}%")
-    st.caption(
-        f"ROI 크기: {metrics['roi_width']} × {metrics['roi_height']} px. "
-        "평균 G 밝기는 이미지의 녹색 채널 기준 상대값이며, 절대 형광 세기 단위가 아닙니다."
-    )
-    st.info(
-        f"‘G≥{ceiling_g} 상한 도달 비율’은 기존 앱의 225/225 표시와 비교하기 위한 참고 지표입니다. "
-        "이는 실제 포화 비율과 다르며, G값이 정확히 255인 비율은 별도로 표시됩니다."
-    )
-
-    if experiment_type == "농도 선정":
-        checks = [
-            ("밝기 범위", "충족" if low <= metrics["mean_g"] <= high else "미충족"),
-            ("실제 포화 비율", "충족" if metrics["saturation_pct"] <= satmax else "미충족"),
-            ("배경과 구분", ("충족" if metrics["mean_g"] - bg >= 10 else "미충족") if bg > 0 else "확인 필요"),
-        ]
-        st.markdown("#### 적합성 판정")
-        for label, status in checks:
-            symbol = "✅" if status == "충족" else "❌" if status == "미충족" else "⚠️"
-            st.write(f"{symbol} **{label}:** {status}")
-        st.caption("배경 구분의 10 밝기 차이는 임시 기준입니다. 실제 실험 조건에 맞춰 사전에 정하세요.")
+    if is_concentration:
+        # Concentration selection intentionally displays only the G=255 saturation-pixel ratio.
+        st.metric("G=255 포화 픽셀 비율", f"{metrics['saturation_pct']:.2f}%")
+        st.caption(
+            f"ROI 크기: {metrics['roi_width']} × {metrics['roi_height']} px. "
+            "포화 픽셀은 분석 영역에서 G 채널 값이 255인 픽셀로 계산합니다."
+        )
     else:
-        checks = []
+        col1, col2, col3 = st.columns(3)
+        col1.metric("평균 G 밝기", f"{metrics['mean_g']:.2f}/255")
+        col2.metric("실제 최대 G 밝기", f"{metrics['max_g']}/255")
+        col3.metric("G=255 포화 픽셀 비율", f"{metrics['saturation_pct']:.2f}%")
+        st.caption(
+            f"ROI 크기: {metrics['roi_width']} × {metrics['roi_height']} px. "
+            "평균 G 밝기는 이미지의 녹색 채널 기준 상대값이며, 절대 형광 세기 단위가 아닙니다."
+        )
 
     record = {
         "id": str(uuid.uuid4()),
@@ -183,11 +150,7 @@ def photo_panel(experiment_type, show_ph=False, show_conc=False, show_addition=F
         "concentration": conc if show_conc else None,
         "additive": additive,
         "addition_ml": amount,
-        "mean_g": round(metrics["mean_g"], 4),
-        "max_g": metrics["max_g"],
         "saturation_pct": round(metrics["saturation_pct"], 4),
-        "ceiling_g": ceiling_g,
-        "ceiling_hit_pct": round(metrics["ceiling_hit_pct"], 4),
         "roi_left_pct": left,
         "roi_right_pct": right,
         "roi_top_pct": top,
@@ -197,6 +160,10 @@ def photo_panel(experiment_type, show_ph=False, show_conc=False, show_addition=F
         "image_width": metrics["image_width"],
         "image_height": metrics["image_height"],
     }
+    # The two fluorescence-analysis menus retain all three requested metrics.
+    if not is_concentration:
+        record["mean_g"] = round(metrics["mean_g"], 4)
+        record["max_g"] = metrics["max_g"]
 
     csv_bytes = pd.DataFrame([record]).to_csv(index=False).encode("utf-8-sig")
     st.download_button(
@@ -217,17 +184,11 @@ def photo_panel(experiment_type, show_ph=False, show_conc=False, show_addition=F
     if st.button("💾 이 측정 결과 저장", type="primary", key=f"save_{experiment_type}"):
         record["image_bytes"] = jpg_bytes(img)
         st.session_state.records.insert(0, record)
-        if experiment_type == "농도 선정":
+        if is_concentration:
             conc_row = {
                 "시료 이름": sample_name,
                 "농도": conc,
-                "평균 G 밝기": round(metrics["mean_g"], 4),
-                "최대 G 밝기": metrics["max_g"],
-                "실제 포화 비율(%)": round(metrics["saturation_pct"], 4),
-                f"G≥{ceiling_g} 비율(%)": round(metrics["ceiling_hit_pct"], 4),
-                "밝기 범위": checks[0][1],
-                "실제 포화 비율": checks[1][1],
-                "배경과 구분": checks[2][1],
+                "G=255 포화 픽셀 비율(%)": round(metrics["saturation_pct"], 4),
             }
             st.session_state.conc_records.insert(0, conc_row)
         st.success("현재 세션에 저장했어요. 중요한 결과는 CSV와 사진으로 다운로드해 보관하세요.")
@@ -235,7 +196,7 @@ def photo_panel(experiment_type, show_ph=False, show_conc=False, show_addition=F
 
 if page == "🧪 농도 선정":
     st.header("농도 선정")
-    st.write("사진 업로드, 밝기 분석, 기존 상한 도달 정도 확인, 농도 적합성 판정을 한 화면에서 진행합니다.")
+    st.write("분석 영역(ROI)에서 G 채널 값이 255인 포화 픽셀의 비율만 확인합니다.")
     photo_panel("농도 선정", show_conc=True)
 
 elif page == "📈 pH 기준시료-형광":
@@ -249,7 +210,7 @@ elif page == "📈 pH 기준시료-형광":
         st.pyplot(plot_points(df, "pH", "평균 G 밝기", "pH와 형광 밝기의 관계 (저장된 측정값)"))
         st.download_button(
             "pH 기준시료 데이터 CSV 다운로드",
-            df[["sample_name", "pH", "concentration", "mean_g", "saturation_pct", "ceiling_hit_pct", "memo"]].to_csv(index=False).encode("utf-8-sig"),
+            df[["sample_name", "pH", "concentration", "mean_g", "max_g", "saturation_pct", "memo"]].to_csv(index=False).encode("utf-8-sig"),
             "ph_reference_data.csv",
             "text/csv",
         )
@@ -289,21 +250,34 @@ with st.expander("🗂️ 저장 기록 / 데이터 다운로드", expanded=Fals
     if not st.session_state.records:
         st.info("아직 저장된 측정 결과가 없습니다. 위 메뉴에서 사진을 분석하고 저장하세요.")
     for index, record in enumerate(st.session_state.records):
-        with st.expander(f"{record.get('experiment_type')} · {record.get('sample_name') or '이름 없는 시료'} · G {record.get('mean_g')}"):
-            for key, label in [
-                ("ph", "pH"),
-                ("concentration", "농도"),
-                ("additive", "첨가물"),
-                ("addition_ml", "첨가량 (mL)"),
-                ("mean_g", "평균 G 밝기"),
-                ("max_g", "실제 최대 G 밝기"),
-                ("saturation_pct", "실제 포화 비율 (%)"),
-                ("ceiling_g", "기존 상한 비교값 G"),
-                ("ceiling_hit_pct", "상한 도달 비율 (%)"),
-                ("memo", "메모"),
-            ]:
-                value = record.get(key)
-                st.write(f"**{label}:** {value if value not in (None, '') else '미입력'}")
+        is_concentration_record = record.get("experiment_type") == "농도 선정"
+        display_name = record.get("sample_name") or "이름 없는 시료"
+        if is_concentration_record:
+            expander_title = f"{record.get('experiment_type')} · {display_name} · 포화 {record.get('saturation_pct')}%"
+        else:
+            expander_title = f"{record.get('experiment_type')} · {display_name} · G {record.get('mean_g')}"
+        with st.expander(expander_title):
+            if is_concentration_record:
+                for key, label in [
+                    ("concentration", "농도"),
+                    ("saturation_pct", "G=255 포화 픽셀 비율 (%)"),
+                    ("memo", "메모"),
+                ]:
+                    value = record.get(key)
+                    st.write(f"**{label}:** {value if value not in (None, '') else '미입력'}")
+            else:
+                for key, label in [
+                    ("ph", "pH"),
+                    ("concentration", "농도"),
+                    ("additive", "첨가물"),
+                    ("addition_ml", "첨가량 (mL)"),
+                    ("mean_g", "평균 G 밝기"),
+                    ("max_g", "실제 최대 G 밝기"),
+                    ("saturation_pct", "G=255 포화 픽셀 비율 (%)"),
+                    ("memo", "메모"),
+                ]:
+                    value = record.get(key)
+                    st.write(f"**{label}:** {value if value not in (None, '') else '미입력'}")
             if record.get("image_bytes"):
                 st.image(record["image_bytes"], use_container_width=True)
             json_data = {key: value for key, value in record.items() if key != "image_bytes"}
@@ -323,11 +297,11 @@ with st.expander("🗂️ 저장 기록 / 데이터 다운로드", expanded=Fals
             "text/csv",
         )
     if st.session_state.conc_records:
-        st.subheader("농도 선정 판정 기록")
+        st.subheader("농도 선정 포화 픽셀 기록")
         df = pd.DataFrame(st.session_state.conc_records)
         st.dataframe(df, use_container_width=True, hide_index=True)
         st.download_button(
-            "농도 선정 판정 CSV 다운로드",
+            "농도 선정 포화 픽셀 CSV 다운로드",
             df.to_csv(index=False).encode("utf-8-sig"),
             "concentration_selection.csv",
             "text/csv",
