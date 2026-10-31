@@ -264,16 +264,18 @@ elif page == "🧫 완충용액-형광":
             columns={"ph": "pH", "mean_g": "평균 G 밝기"})
             if buffer_rows else pd.DataFrame(columns=["pH", "평균 G 밝기"]))
 
-        st.markdown("**1. pH별 형광 발광 세기**")
-        ref_ok = not ref_df.empty and not ref_df.dropna(
-            subset=["pH", "평균 G 밝기"]).empty
-        buf_ok = not buf_df.empty and not buf_df.dropna(
-            subset=["pH", "평균 G 밝기"]).empty
-        if ref_ok or buf_ok:
-            st.pyplot(plot_ph_fluorescence(ref_df, buf_df))
-            st.caption("pH 기준시료와 완충용액을 서로 다른 선과 범례로 구분했습니다. 세로축은 절대 형광 세기가 아닌 이미지의 평균 G 밝기(0–255)입니다.")
+        st.markdown("**1. 완충용액의 pH별 형광 발광 세기**")
+        buf_plot_df = buf_df.dropna(
+            subset=["pH", "평균 G 밝기"]).copy() if not buf_df.empty else pd.DataFrame()
+        if not buf_plot_df.empty:
+            st.pyplot(plot_points(
+                buf_plot_df, "pH", "평균 G 밝기",
+                "완충용액의 pH별 형광 발광 세기",
+                "pH", "평균 G 밝기 (0–255)"
+            ))
+            st.caption("완충용액 데이터만 표시했습니다. 세로축은 절대 형광 세기가 아닌 이미지의 평균 G 밝기(0–255)입니다.")
         else:
-            st.info("pH와 평균 G 밝기가 모두 입력된 기준시료 또는 완충용액 데이터가 있어야 그래프가 표시됩니다.")
+            st.info("pH와 평균 G 밝기가 모두 입력된 완충용액 데이터가 있어야 그래프가 표시됩니다.")
 
         st.markdown("**2. HCl 첨가량별 pH 변화**")
         add_df = pd.DataFrame(buffer_rows).rename(
